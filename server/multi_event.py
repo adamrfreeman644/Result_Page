@@ -157,6 +157,9 @@ def event_handler(settings, data_root, export_root, config_dir):
                     "const all=[...enriched.bracket,...enriched.extras,...seedingExtras];",
                     """let all=[...enriched.bracket,...enriched.extras,...seedingExtras];
     if(selected==='Qualifiers'){
+      const multipleCategories=all.length>1;
+      if(multipleCategories)all.sort((a,b)=>tournamentRank(a.e.tournament)-tournamentRank(b.e.tournament));
+      const heading=(item,label)=>multipleCategories?item.e.tournament+' � '+label:label;
       const timeValue=value=>{
         if(!/^\\d+(?::\\d+){1,2}(?:\\.\\d+)?$/.test(value||''))return Infinity;
         return value.split(':').reduce((seconds,part)=>seconds*60+Number(part),0);
@@ -169,9 +172,9 @@ def event_handler(settings, data_root, export_root, config_dir):
             const lap=(row.laps||[]).find(entry=>Number(entry.lap_number)===number);
             return {...row,position:null,finishPos:null,time:lap?.time||''};
           }).sort((a,b)=>timeValue(a.time)-timeValue(b.time));
-          return {...item,e:{...item.e,id:item.e.id+'-lap-'+number,name:label,level:label},r:rows};
+          return {...item,e:{...item.e,id:item.e.id+'-lap-'+number,name:heading(item,label),level:label},r:rows};
         });
-        return [...laps,{...item,e:{...item.e,name:'Overall Results',level:'Overall Results'}}];
+        return [...laps,{...item,e:{...item.e,name:heading(item,'Overall Results'),level:'Overall Results'}}];
       });
     }""",
                 ).replace(
