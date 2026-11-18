@@ -183,9 +183,6 @@ def archive_page(riders, search, name, aliases=None):
                        if preferred == key and alias in original_names]
         if other_names:
             subtitle += " &middot; Also recorded as " + escape(", ".join(sorted(other_names)))
-        if rider:
-            manage = "/admin/rider-aliases/?" + urlencode({"keep": display})
-            content = f'<p><a href="{escape(manage)}">Combine with another name</a></p>' + content
     else:
         title = "All riders"
         subtitle = "Find laps and race times across published events."
@@ -213,7 +210,6 @@ def archive_page(riders, search, name, aliases=None):
         '<body class="event-directory"><header class="directory-header"><div class="directory-inner">'
         f'{nav}<h1>{title}</h1><p>{subtitle}</p></div></header>'
         f'<main class="directory-main"><div class="directory-inner">{content}</div></main>'
-        '<footer class="event-site-footer"><a class="event-directory-link" href="/">All events</a>'
-        '<a class="event-directory-link" href="/admin/rider-aliases/">Manage rider names</a></footer>'
+        '<footer class="event-site-footer"><a class="event-directory-link" href="/">All events</a></footer>'
         '</body></html>'
     ).encode("utf-8")
