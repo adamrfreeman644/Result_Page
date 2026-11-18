@@ -97,13 +97,23 @@
   background: #fff;
 }
 .rider-alias-form label { font-weight: 700; }
-.rider-alias-form :is(input, button) {
+.rider-alias-form :is(input:not([type="checkbox"]), button, select) {
   min-height: 2.75rem;
   padding: .35rem .65rem;
   border: 1px solid #c0cbd8;
   border-radius: .45rem;
   font: inherit;
 }
+.merge-rider-list {
+  display: grid;
+  gap: .18rem;
+  max-height: 15rem;
+  overflow-y: auto;
+  border: 1px solid #c0cbd8;
+  border-radius: .45rem;
+}
+.merge-rider-list label { padding: .24rem .35rem; cursor: pointer; }
+.merge-rider-list label:has(input:checked) { background: #e7eff7; }
 .rider-alias-form button { margin-top: .35rem; background: #162c43; color: #fff; cursor: pointer; }
 .archive-riders {
   display: grid;
