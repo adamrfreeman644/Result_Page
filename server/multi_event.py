@@ -107,6 +107,22 @@ def event_handler(settings, data_root, export_root, config_dir):
         threading.Thread(target=app.watch, name=f"racetec-{slug}", daemon=True).start()
 
     class Event(app.App):
+        def js(self, body, code=200):
+            if archived and isinstance(body, dict) and body.get("teams"):
+                with closing(app.db()) as connection:
+                    has_roster = connection.execute(
+                        "SELECT 1 FROM sqlite_master WHERE name='archive_team_members'"
+                    ).fetchone()
+                    if has_roster:
+                        for team in body["teams"]:
+                            team["members"] = [
+                                row[0] for row in connection.execute(
+                                    "SELECT member FROM archive_team_members WHERE team=? ORDER BY sort_order",
+                                    (team["team"],),
+                                )
+                            ]
+            return super().js(body, code)
+
         def send_header(self, keyword, value):
             if keyword == "Location" and value.startswith("/"):
                 value = prefix + value
@@ -132,6 +148,12 @@ def event_handler(settings, data_root, export_root, config_dir):
             if archived and path.name == "index.html" and route in {"/", "/index.html"}:
                 data = data.replace(b"<h1>Live results</h1>", b"<h1>Results</h1>")
                 data = data.replace(b"Automatic results feed", b"Event archive")
+            if archived and path.name == "team.js":
+                data = data.replace(
+                    b"</p></div></section><section",
+                    b"</p>${team.members?.length?`<p>${team.members.map(esc).join(', ')}</p>`:''}</div></section><section>",
+                    1,
+                )
             if archived and path.name == "live.js":
                 script = data.decode("utf-8").replace(
                     "BracketProjection?BracketProjection.stageOfItem(item):'Qualifiers'",
