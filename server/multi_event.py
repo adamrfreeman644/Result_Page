@@ -66,6 +66,7 @@ def event_handler(settings, data_root, export_root, config_dir):
     prefix = f"/events/{slug}"
     generic = not settings.get("owar", False)
     archived = settings.get("archive", False)
+    category_qualifiers = settings.get("qualifiers_in_categories", False)
     palette = settings.get("palette", {})
     if any(key not in {"accent", "header"} or not re.fullmatch(r"#[0-9a-fA-F]{6}", value)
            for key, value in palette.items()):
@@ -140,7 +141,7 @@ def event_handler(settings, data_root, export_root, config_dir):
                     "(x.e.level||'Results')",
                 ).replace(
                     "const rawTs=[...new Set((f.events||[]).map(e=>e.tournament||'Tournament'))];",
-                    "const archiveTab=e=>e.level==='Qualifiers'?'Qualifiers':displayTournament(e.tournament||'Tournament');",
+                    "const archiveTab=e=>!categoryQualifiers&&e.level==='Qualifiers'?'Qualifiers':displayTournament(e.tournament||'Tournament');",
                 ).replace(
                     "rawTs.map(displayTournament)",
                     "(f.events||[]).map(archiveTab)",
@@ -149,14 +150,14 @@ def event_handler(settings, data_root, export_root, config_dir):
                     "archiveTab(item.e)===selected",
                 ).replace(
                     "const order=['open'",
-                    "const order=['qualifiers','sts championship','eol points','open'",
+                    "const order=['qualifiers',...(categoryQualifiers?[]:['sts championship','eol points']),'open'",
                 ).replace(
                     "timeLabel=e.multi_lap?'Fastest lap':'Time'",
                     "timeLabel=e.tournament==='EOL Points'?'Points':e.tournament==='STS Championship'?'Time recorded':e.multi_lap?'Fastest lap':'Time'",
                 ).replace(
                     "const all=[...enriched.bracket,...enriched.extras,...seedingExtras];",
                     """let all=[...enriched.bracket,...enriched.extras,...seedingExtras];
-    if(selected==='Qualifiers'){
+    if(all.some(item=>item.e.level==='Qualifiers')){
       const multipleCategories=all.length>1;
       if(multipleCategories)all.sort((a,b)=>tournamentRank(a.e.tournament)-tournamentRank(b.e.tournament));
       const heading=(item,label)=>multipleCategories?item.e.tournament+' - '+label:label;
@@ -165,6 +166,7 @@ def event_handler(settings, data_root, export_root, config_dir):
         return value.split(':').reduce((seconds,part)=>seconds*60+Number(part),0);
       };
       all=all.flatMap(item=>{
+        if(item.e.level!=='Qualifiers')return [item];
         const lapNumbers=[...new Set(item.r.flatMap(row=>(row.laps||[]).map(lap=>Number(lap.lap_number))))].sort((a,b)=>a-b);
         const laps=lapNumbers.map(number=>{
           const label='Lap '+number;
@@ -172,15 +174,34 @@ def event_handler(settings, data_root, export_root, config_dir):
             const lap=(row.laps||[]).find(entry=>Number(entry.lap_number)===number);
             return {...row,position:null,finishPos:null,time:lap?.time||''};
           }).sort((a,b)=>timeValue(a.time)-timeValue(b.time));
-          return {...item,e:{...item.e,id:item.e.id+'-lap-'+number,name:heading(item,label),level:label},r:rows};
+          return {...item,e:{...item.e,id:item.e.id+'-lap-'+number,name:heading(item,label),level:categoryQualifiers?'Qualifiers':label},qualifierView:label,r:rows};
         });
-        return [...laps,{...item,e:{...item.e,name:heading(item,'Overall Results'),level:'Overall Results'}}];
+        return [...laps,{...item,e:{...item.e,name:heading(item,'Overall Results'),level:categoryQualifiers?'Qualifiers':'Overall Results'},qualifierView:'Overall Results'}];
       });
     }""",
                 ).replace(
                     "if(!selectedLevel||!levels.includes(selectedLevel))selectedLevel=levels[0];",
                     "if(!selectedLevel||!levels.includes(selectedLevel))selectedLevel=selected==='Qualifiers'?'Overall Results':levels[0];",
+                ).replace(
+                    "const set=all.filter(x=>(x.e.level||'Results')===selectedLevel);",
+                    """let set=all.filter(x=>(x.e.level||'Results')===selectedLevel);
+    let qualifierNav='';
+    if(categoryQualifiers&&selectedLevel==='Qualifiers'){
+      const views=[...new Set(set.map(item=>item.qualifierView))];
+      if(!views.includes(selectedQualifierView))selectedQualifierView='Overall Results';
+      qualifierNav='<nav class="tabs" aria-label="Qualifier results">'+views.map(view=>
+        '<button type="button" class="tab'+(view===selectedQualifierView?' active':'')+'" data-qualifier-view="'+esc(view)+'" aria-pressed="'+(view===selectedQualifierView)+'">'+esc(view)+'</button>'
+      ).join('')+'</nav>';
+      set=set.filter(item=>item.qualifierView===selectedQualifierView);
+    }""",
+                ).replace(
+                    '=`<div class="race-grid ${set.length',
+                    '=`${qualifierNav}<div class="race-grid ${set.length',
+                ).replace(
+                    "    $('#stage-results').querySelectorAll('.race-card-header",
+                    "    $('#stage-results').querySelectorAll('[data-qualifier-view]').forEach(button=>button.onclick=()=>{selectedQualifierView=button.dataset.qualifierView;render()});\n    $('#stage-results').querySelectorAll('.race-card-header",
                 ).replace("if(!liveTabs.includes('Lap Times'))", "if(liveTabs.length&&!liveTabs.includes('Lap Times'))")
+                script = f"const categoryQualifiers={'true' if category_qualifiers else 'false'};\nlet selectedQualifierView='Overall Results';\n" + script
                 script = script.replace("function renderUpdateAge(){", "function renderUpdateAge(){ const archiveLabel=$('#updated-status');if(archiveLabel){archiveLabel.textContent='Archived results';return;}")
                 data = script.encode("utf-8")
             if palette and path.name == "styles.css":
