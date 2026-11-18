@@ -16,6 +16,77 @@ def rider_href(name):
     return "/riders/?" + urlencode({"name": name})
 
 
+def alias_database(path):
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE IF NOT EXISTS rider_aliases (alias TEXT PRIMARY KEY, preferred TEXT NOT NULL)")
+    return db
+
+
+def load_aliases(path):
+    with closing(alias_database(path)) as db:
+        return dict(db.execute("SELECT alias,preferred FROM rider_aliases"))
+
+
+def change_alias(path, riders, action, alias, preferred):
+    alias, preferred = name_key(alias), name_key(preferred)
+    with closing(alias_database(path)) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        links = dict(db.execute("SELECT alias,preferred FROM rider_aliases"))
+        if action == "remove":
+            db.execute("DELETE FROM rider_aliases WHERE alias=?", (alias,))
+            return
+        if action != "link" or alias not in riders or preferred not in riders:
+            raise ValueError("Choose two names from the rider list.")
+        preferred = links.get(preferred, preferred)
+        if alias == preferred:
+            raise ValueError("Choose two different rider profiles.")
+        if alias in links.values():
+            raise ValueError("Unlink this name's existing variants before linking it as a variant.")
+        db.execute(
+            "INSERT INTO rider_aliases VALUES (?,?) ON CONFLICT(alias) DO UPDATE SET preferred=excluded.preferred",
+            (alias, preferred),
+        )
+
+
+def combined_riders(riders, aliases):
+    merged = {}
+    for key, (display, records) in riders.items():
+        preferred = aliases.get(key, key)
+        preferred_display = riders.get(preferred, (display, []))[0]
+        merged.setdefault(preferred, (preferred_display, []))[1].extend(records)
+    return merged
+
+
+def alias_admin_page(riders, aliases, notice=""):
+    escape = html.escape
+    names = sorted((item[0] for item in riders.values()), key=name_key)
+    options = ''.join(f'<option value="{escape(name)}"></option>' for name in names)
+    links = ''.join(
+        f'<li>{escape(riders.get(alias, (alias, []))[0])} &rarr; '
+        f'{escape(riders.get(preferred, (preferred, []))[0])}</li>'
+        for alias, preferred in sorted(aliases.items())
+    )
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<title>Rider name links</title><link rel="stylesheet" href="/event-chrome.css"></head>'
+        '<body class="event-directory"><header class="directory-header"><div class="directory-inner">'
+        '<nav class="archive-nav"><a href="/admin/">Event admin</a><a href="/riders/">All riders</a></nav>'
+        '<h1>Rider name links</h1><p>Link two spellings of the same rider to one history.</p>'
+        '</div></header><main class="directory-main"><div class="directory-inner">'
+        + (f'<p role="status">{escape(notice)}</p>' if notice else '')
+        + '<form class="rider-alias-form" method="post" action="/admin/rider-aliases/">'
+        '<label for="alias">Other name</label><input id="alias" name="alias" list="known-riders" required>'
+        '<label for="preferred">Preferred name</label><input id="preferred" name="preferred" list="known-riders">'
+        f'<datalist id="known-riders">{options}</datalist>'
+        '<label for="admin-token">Admin token</label><input type="password" id="admin-token" name="token" required>'
+        '<div><button name="action" value="link">Link names</button> '
+        '<button name="action" value="remove">Unlink other name</button></div></form>'
+        f'<h2>Existing links</h2>{("<ul>" + links + "</ul>") if links else "<p>No names have been linked yet.</p>"}'
+        '</div></main></body></html>'
+    ).encode("utf-8")
+
+
 def collect_times(events):
     riders = {}
     for event, app in events:
@@ -63,10 +134,14 @@ def collect_times(events):
     return riders
 
 
-def archive_page(riders, search, name):
+def archive_page(riders, search, name, aliases=None):
+    aliases = aliases or {}
+    original_names = riders
+    riders = combined_riders(riders, aliases)
     escape = html.escape
     nav = '<nav class="archive-nav"><a href="/">All events</a> <a href="/riders/">All riders</a></nav>'
-    rider = riders.get(name_key(name)) if name else None
+    key = aliases.get(name_key(name), name_key(name))
+    rider = riders.get(key) if name else None
     if name:
         display, records = rider or (name, [])
         title = escape(display)
@@ -83,11 +158,17 @@ def archive_page(riders, search, name):
             for (event, href), rows in groups.items()
         ) or '<p>No recorded times were found for this name.</p>'
         subtitle = f"{len(records)} recorded times across {len(groups)} events"
+        other_names = [original_names[alias][0] for alias, preferred in aliases.items()
+                       if preferred == key and alias in original_names]
+        if other_names:
+            subtitle += " &middot; Also recorded as " + escape(", ".join(sorted(other_names)))
     else:
         title = "All riders"
         subtitle = "Find laps and race times across published events."
         matches = sorted(
-            (display for key, (display, _) in riders.items() if name_key(search) in key),
+            (display for key, (display, _) in riders.items() if name_key(search) in key or any(
+                preferred == key and name_key(search) in alias for alias, preferred in aliases.items()
+            )),
             key=name_key,
         )
         links = ''.join(
@@ -108,6 +189,7 @@ def archive_page(riders, search, name):
         '<body class="event-directory"><header class="directory-header"><div class="directory-inner">'
         f'{nav}<h1>{title}</h1><p>{subtitle}</p></div></header>'
         f'<main class="directory-main"><div class="directory-inner">{content}</div></main>'
-        '<footer class="event-site-footer"><a class="event-directory-link" href="/">All events</a></footer>'
+        '<footer class="event-site-footer"><a class="event-directory-link" href="/">All events</a>'
+        '<a class="event-directory-link" href="/admin/rider-aliases/">Manage rider names</a></footer>'
         '</body></html>'
     ).encode("utf-8")
