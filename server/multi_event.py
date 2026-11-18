@@ -159,7 +159,7 @@ def event_handler(settings, data_root, export_root, config_dir):
     if(selected==='Qualifiers'){
       const multipleCategories=all.length>1;
       if(multipleCategories)all.sort((a,b)=>tournamentRank(a.e.tournament)-tournamentRank(b.e.tournament));
-      const heading=(item,label)=>multipleCategories?item.e.tournament+' � '+label:label;
+      const heading=(item,label)=>multipleCategories?item.e.tournament+' - '+label:label;
       const timeValue=value=>{
         if(!/^\\d+(?::\\d+){1,2}(?:\\.\\d+)?$/.test(value||''))return Infinity;
         return value.split(':').reduce((seconds,part)=>seconds*60+Number(part),0);
