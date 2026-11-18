@@ -367,7 +367,8 @@ def run():
                     query.get("name", [""])[0], load_aliases(alias_path)
                 )
             elif path == "/admin/rider-aliases/":
-                document = alias_admin_page(collect_times(rider_events), load_aliases(alias_path))
+                keep = parse_qs(target.query).get("keep", [""])[0]
+                document = alias_admin_page(collect_times(rider_events), load_aliases(alias_path), preferred_name=keep)
             elif path == "/event-chrome.css":
                 document = chrome_styles
                 content_type = "text/css"
