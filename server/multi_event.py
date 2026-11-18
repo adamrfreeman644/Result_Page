@@ -149,7 +149,10 @@ def event_handler(settings, data_root, export_root, config_dir):
                     "archiveTab(item.e)===selected",
                 ).replace(
                     "const order=['open'",
-                    "const order=['qualifiers','open'",
+                    "const order=['qualifiers','sts championship','eol points','open'",
+                ).replace(
+                    "timeLabel=e.multi_lap?'Fastest lap':'Time'",
+                    "timeLabel=e.tournament==='EOL Points'?'Points':e.tournament==='STS Championship'?'Time recorded':e.multi_lap?'Fastest lap':'Time'",
                 ).replace(
                     "const all=[...enriched.bracket,...enriched.extras,...seedingExtras];",
                     """let all=[...enriched.bracket,...enriched.extras,...seedingExtras];
