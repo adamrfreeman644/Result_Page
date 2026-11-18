@@ -18,7 +18,7 @@ STATIC = ROOT / "dist"
 EVENT_PATH = re.compile(r"/events/([a-z0-9]+(?:-[a-z0-9]+)*)(/.*)?")
 INTERNAL_URL = re.compile(
     r"""(["'`])/(?=(?:api/|assets/|admin/|registration/|registrationdisplay/|"""
-    r"""rider/|team/|seeding/|data/|[\w-]+\.(?:js|css|png|svg)\b)|["'`])"""
+    r"""rider/|team/|seeding/|data/|[\w-]+\.(?:js|css|png|svg)\b)|\?event=|["'`])"""
 )
 
 
