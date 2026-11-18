@@ -150,6 +150,30 @@ def event_handler(settings, data_root, export_root, config_dir):
                 ).replace(
                     "const order=['open'",
                     "const order=['qualifiers','open'",
+                ).replace(
+                    "const all=[...enriched.bracket,...enriched.extras,...seedingExtras];",
+                    """let all=[...enriched.bracket,...enriched.extras,...seedingExtras];
+    if(selected==='Qualifiers'){
+      const timeValue=value=>{
+        if(!/^\\d+(?::\\d+){1,2}(?:\\.\\d+)?$/.test(value||''))return Infinity;
+        return value.split(':').reduce((seconds,part)=>seconds*60+Number(part),0);
+      };
+      all=all.flatMap(item=>{
+        const lapNumbers=[...new Set(item.r.flatMap(row=>(row.laps||[]).map(lap=>Number(lap.lap_number))))].sort((a,b)=>a-b);
+        const laps=lapNumbers.map(number=>{
+          const label='Lap '+number;
+          const rows=item.r.map(row=>{
+            const lap=(row.laps||[]).find(entry=>Number(entry.lap_number)===number);
+            return {...row,position:null,finishPos:null,time:lap?.time||''};
+          }).sort((a,b)=>timeValue(a.time)-timeValue(b.time));
+          return {...item,e:{...item.e,id:item.e.id+'-lap-'+number,name:label,level:label},r:rows};
+        });
+        return [...laps,{...item,e:{...item.e,name:'Overall Results',level:'Overall Results'}}];
+      });
+    }""",
+                ).replace(
+                    "if(!selectedLevel||!levels.includes(selectedLevel))selectedLevel=levels[0];",
+                    "if(!selectedLevel||!levels.includes(selectedLevel))selectedLevel=selected==='Qualifiers'?'Overall Results':levels[0];",
                 ).replace("if(!liveTabs.includes('Lap Times'))", "if(liveTabs.length&&!liveTabs.includes('Lap Times'))")
                 script = script.replace("function renderUpdateAge(){", "function renderUpdateAge(){ const archiveLabel=$('#updated-status');if(archiveLabel){archiveLabel.textContent='Archived results';return;}")
                 data = script.encode("utf-8")
