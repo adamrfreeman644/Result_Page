@@ -138,6 +138,18 @@ def event_handler(settings, data_root, export_root, config_dir):
                 ).replace(
                     "BracketProjection?BracketProjection.stageOfItem(x):'Qualifiers'",
                     "(x.e.level||'Results')",
+                ).replace(
+                    "const rawTs=[...new Set((f.events||[]).map(e=>e.tournament||'Tournament'))];",
+                    "const archiveTab=e=>e.level==='Qualifiers'?'Qualifiers':displayTournament(e.tournament||'Tournament');",
+                ).replace(
+                    "rawTs.map(displayTournament)",
+                    "(f.events||[]).map(archiveTab)",
+                ).replace(
+                    "displayTournament(item.e.tournament||'Tournament')===selected",
+                    "archiveTab(item.e)===selected",
+                ).replace(
+                    "const order=['open'",
+                    "const order=['qualifiers','open'",
                 ).replace("if(!liveTabs.includes('Lap Times'))", "if(liveTabs.length&&!liveTabs.includes('Lap Times'))")
                 script = script.replace("function renderUpdateAge(){", "function renderUpdateAge(){ const archiveLabel=$('#updated-status');if(archiveLabel){archiveLabel.textContent='Archived results';return;}")
                 data = script.encode("utf-8")
