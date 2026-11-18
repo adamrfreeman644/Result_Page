@@ -1,6 +1,7 @@
 """Serve independently configured RaceTec events on one results website."""
 
 import html
+import hmac
 import importlib.util
 import io
 import json
@@ -13,7 +14,7 @@ from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
-from rider_archive import archive_page, collect_times
+from rider_archive import alias_admin_page, archive_page, change_alias, collect_times, load_aliases
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "dist"
@@ -324,8 +325,11 @@ def run():
         f'<li><a href="/events/{event["slug"]}/admin/">{html.escape(event["name"])}</a></li>'
         for event in settings
     )
-    admin = page("Event Admin", '<p><a href="/">All events</a></p><ul>' + admin_links + '</ul>')
+    admin = page("Event Admin", '<p><a href="/">All events</a></p>'
+                 '<p><a href="/admin/rider-aliases/">Rider name links</a></p><ul>' + admin_links + '</ul>')
     rider_events = [(event, events[event["slug"]].results_app) for event in settings]
+    alias_path = data_root / "rider-aliases.sqlite"
+    data_root.mkdir(parents=True, exist_ok=True)
 
     class Directory(BaseHTTPRequestHandler):
         def parse_request(self):
@@ -359,8 +363,11 @@ def run():
             elif path == "/riders/":
                 query = parse_qs(target.query)
                 document = archive_page(
-                    collect_times(rider_events), query.get("search", [""])[0], query.get("name", [""])[0]
+                    collect_times(rider_events), query.get("search", [""])[0],
+                    query.get("name", [""])[0], load_aliases(alias_path)
                 )
+            elif path == "/admin/rider-aliases/":
+                document = alias_admin_page(collect_times(rider_events), load_aliases(alias_path))
             elif path == "/event-chrome.css":
                 document = chrome_styles
                 content_type = "text/css"
@@ -369,7 +376,10 @@ def run():
             if document is None:
                 self.send_error(404)
                 return
-            self.send_response(200)
+            self.send_document(document, content_type)
+
+        def send_document(self, document, content_type="text/html", status=200):
+            self.send_response(status)
             self.send_header("Content-Type", content_type + "; charset=utf-8")
             self.send_header("Content-Length", str(len(document)))
             self.send_header("Cache-Control", "no-store")
@@ -378,6 +388,32 @@ def run():
                 self.wfile.write(document)
 
         do_HEAD = do_GET
+
+        def do_POST(self):
+            if urlsplit(self.path).path != "/admin/rider-aliases/":
+                self.send_error(404)
+                return
+            length = self.headers.get("Content-Length", "")
+            if not length.isascii() or not length.isdigit() or len(length) > 4 or int(length) > 4096:
+                self.send_error(400)
+                return
+            fields = parse_qs(self.rfile.read(int(length)).decode("utf-8", errors="replace"))
+            token = os.getenv("ADMIN_TOKEN", "").encode()
+            supplied = fields.get("token", [""])[0].encode()
+            if not token or not hmac.compare_digest(token, supplied):
+                self.send_error(403, "Invalid admin token")
+                return
+            riders = collect_times(rider_events)
+            action = fields.get("action", [""])[0]
+            alias = fields.get("alias", [""])[0]
+            preferred = fields.get("preferred", [""])[0]
+            try:
+                change_alias(alias_path, riders, action, alias, preferred)
+            except ValueError as error:
+                self.send_document(alias_admin_page(riders, load_aliases(alias_path), str(error)), status=400)
+                return
+            notice = "Names linked." if action == "link" else "Name unlinked."
+            self.send_document(alias_admin_page(riders, load_aliases(alias_path), notice))
 
     ThreadingHTTPServer(("0.0.0.0", int(os.getenv("PORT", "6544"))), Directory).serve_forever()
 
