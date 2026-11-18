@@ -6,7 +6,9 @@ import io
 import json
 import os
 import re
+import sqlite3
 import threading
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -58,12 +60,17 @@ def scoped_asset(source, prefix, title, generic):
     return source
 
 
-def event_handler(settings, data_root, export_root):
+def event_handler(settings, data_root, export_root, config_dir):
     slug = settings["slug"]
     title = html.escape(settings["name"])
     prefix = f"/events/{slug}"
     generic = not settings.get("owar", False)
-    source = (export_root / settings["export"]).resolve()
+    archived = settings.get("archive", False)
+    palette = settings.get("palette", {})
+    if any(key not in {"accent", "header"} or not re.fullmatch(r"#[0-9a-fA-F]{6}", value)
+           for key, value in palette.items()):
+        raise ValueError(f"Invalid colour palette for {slug}")
+    source = (export_root / settings.get("export", f"{slug}/results.rdf")).resolve()
     if export_root not in source.parents or source.suffix.lower() != ".rdf":
         raise ValueError(f"Invalid RDF export path for {slug}")
     if "admin_token_env" in settings:
@@ -86,7 +93,17 @@ def event_handler(settings, data_root, export_root):
     app.GENERIC_EVENT = generic
     if not generic:
         app.import_historical()
-    threading.Thread(target=app.watch, name=f"racetec-{slug}", daemon=True).start()
+    if archived and not app.DB_FILE.exists():
+        seed = config_dir / f"{slug}.sqlite"
+        temporary = app.DB_FILE.with_suffix(".importing")
+        with closing(sqlite3.connect(seed.as_uri() + "?mode=ro", uri=True)) as original:
+            with closing(sqlite3.connect(temporary)) as destination:
+                original.backup(destination)
+                if destination.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                    raise ValueError(f"Invalid archive database for {slug}")
+        temporary.replace(app.DB_FILE)
+    if not archived:
+        threading.Thread(target=app.watch, name=f"racetec-{slug}", daemon=True).start()
 
     class Event(app.App):
         def send_header(self, keyword, value):
@@ -111,6 +128,25 @@ def event_handler(settings, data_root, export_root):
                 return super().send_head()
             source = path.read_text(encoding="utf-8")
             data = scoped_asset(source, prefix, title, generic).encode("utf-8")
+            if archived and path.name == "index.html" and route in {"/", "/index.html"}:
+                data = data.replace(b"<h1>Live results</h1>", b"<h1>Results</h1>")
+                data = data.replace(b"Automatic results feed", b"Event archive")
+            if archived and path.name == "live.js":
+                script = data.decode("utf-8").replace(
+                    "BracketProjection?BracketProjection.stageOfItem(item):'Qualifiers'",
+                    "(item.e.level||'Results')",
+                ).replace(
+                    "BracketProjection?BracketProjection.stageOfItem(x):'Qualifiers'",
+                    "(x.e.level||'Results')",
+                ).replace("if(!liveTabs.includes('Lap Times'))", "if(liveTabs.length&&!liveTabs.includes('Lap Times'))")
+                script = script.replace("function renderUpdateAge(){", "function renderUpdateAge(){ const archiveLabel=$('#updated-status');if(archiveLabel){archiveLabel.textContent='Archived results';return;}")
+                data = script.encode("utf-8")
+            if palette and path.name == "styles.css":
+                accent = palette.get("accent", "#f5cc24")
+                header = palette.get("header", "#101010")
+                data += (f":root{{--yellow:{accent};--yellow2:{accent};--paper:#f6f8ef}}"
+                         f".brandbar,.race-table>header,.rider-hero{{background:{header}}}"
+                         "body{background:var(--paper)}").encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", self.guess_type(str(path)) + "; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
@@ -121,7 +157,7 @@ def event_handler(settings, data_root, export_root):
 
 
 def run():
-    config_path = Path(os.getenv("EVENTS_CONFIG", ROOT / "events.json"))
+    config_path = Path(os.getenv("EVENTS_CONFIG", ROOT / "events.json")).resolve()
     settings = json.loads(config_path.read_text(encoding="utf-8-sig"))
     data_root = Path(os.getenv("RESULTS_DATA_DIR", "/data")).resolve()
     export_root = Path(os.getenv("RACE_EXPORT_DIR", "/race-export")).resolve()
@@ -131,7 +167,7 @@ def run():
         slug = event["slug"]
         if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug) or slug in events:
             raise ValueError(f"Invalid or duplicate event slug: {slug}")
-        events[slug] = event_handler(event, data_root, export_root)
+        events[slug] = event_handler(event, data_root, export_root, config_path.parent)
         links.append(f'<li><a href="/events/{slug}/">{html.escape(event["name"])}</a></li>')
     home = page("Race Results", '<ul>' + ''.join(links) + '</ul>' if links
                 else '<p>No events have been configured yet.</p>')
