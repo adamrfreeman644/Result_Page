@@ -57,7 +57,7 @@ def combined_riders(riders, aliases):
     return merged
 
 
-def alias_admin_page(riders, aliases, notice=""):
+def alias_admin_page(riders, aliases, notice="", preferred_name=""):
     escape = html.escape
     names = sorted((item[0] for item in riders.values()), key=name_key)
     options = ''.join(f'<option value="{escape(name)}"></option>' for name in names)
@@ -72,15 +72,16 @@ def alias_admin_page(riders, aliases, notice=""):
         '<title>Rider name links</title><link rel="stylesheet" href="/event-chrome.css"></head>'
         '<body class="event-directory"><header class="directory-header"><div class="directory-inner">'
         '<nav class="archive-nav"><a href="/admin/">Event admin</a><a href="/riders/">All riders</a></nav>'
-        '<h1>Rider name links</h1><p>Link two spellings of the same rider to one history.</p>'
+        '<h1>Combine rider names</h1><p>Choose the name to keep, then select the other name used in results.</p>'
         '</div></header><main class="directory-main"><div class="directory-inner">'
         + (f'<p role="status">{escape(notice)}</p>' if notice else '')
         + '<form class="rider-alias-form" method="post" action="/admin/rider-aliases/">'
-        '<label for="alias">Other name</label><input id="alias" name="alias" list="known-riders" required>'
-        '<label for="preferred">Preferred name</label><input id="preferred" name="preferred" list="known-riders">'
+        '<label for="preferred">Name to keep</label>'
+        f'<input id="preferred" name="preferred" list="known-riders" value="{escape(preferred_name)}">'
+        '<label for="alias">Name to combine</label><input id="alias" name="alias" list="known-riders" required>'
         f'<datalist id="known-riders">{options}</datalist>'
         '<label for="admin-token">Admin token</label><input type="password" id="admin-token" name="token" required>'
-        '<div><button name="action" value="link">Link names</button> '
+        '<div><button name="action" value="link">Combine names</button> '
         '<button name="action" value="remove">Unlink other name</button></div></form>'
         f'<h2>Existing links</h2>{("<ul>" + links + "</ul>") if links else "<p>No names have been linked yet.</p>"}'
         '</div></main></body></html>'
@@ -162,6 +163,9 @@ def archive_page(riders, search, name, aliases=None):
                        if preferred == key and alias in original_names]
         if other_names:
             subtitle += " &middot; Also recorded as " + escape(", ".join(sorted(other_names)))
+        if rider:
+            manage = "/admin/rider-aliases/?" + urlencode({"keep": display})
+            content = f'<p><a href="{escape(manage)}">Combine with another name</a></p>' + content
     else:
         title = "All riders"
         subtitle = "Find laps and race times across published events."
