@@ -27,24 +27,25 @@ def load_aliases(path):
         return dict(db.execute("SELECT alias,preferred FROM rider_aliases"))
 
 
-def change_alias(path, riders, action, alias, preferred):
-    alias, preferred = name_key(alias), name_key(preferred)
+def change_alias(path, riders, action, names, preferred):
+    selected = {name_key(name) for name in names}
+    preferred = name_key(preferred)
     with closing(alias_database(path)) as db, db:
         db.execute("BEGIN IMMEDIATE")
         links = dict(db.execute("SELECT alias,preferred FROM rider_aliases"))
         if action == "remove":
-            db.execute("DELETE FROM rider_aliases WHERE alias=?", (alias,))
+            db.executemany("DELETE FROM rider_aliases WHERE alias=?", ((name,) for name in selected))
             return
-        if action != "link" or alias not in riders or preferred not in riders:
-            raise ValueError("Choose two names from the rider list.")
-        preferred = links.get(preferred, preferred)
-        if alias == preferred:
-            raise ValueError("Choose two different rider profiles.")
-        if alias in links.values():
-            raise ValueError("Unlink this name's existing variants before linking it as a variant.")
-        db.execute(
+        if action != "link" or len(selected) < 2 or not selected <= riders.keys():
+            raise ValueError("Select at least two names from the rider list.")
+        if preferred not in selected:
+            raise ValueError("Choose which selected name to keep.")
+        groups = {links.get(name, name) for name in selected}
+        merged = groups | {name for name, target in links.items() if target in groups}
+        db.execute("DELETE FROM rider_aliases WHERE alias=?", (preferred,))
+        db.executemany(
             "INSERT INTO rider_aliases VALUES (?,?) ON CONFLICT(alias) DO UPDATE SET preferred=excluded.preferred",
-            (alias, preferred),
+            ((name, preferred) for name in merged - {preferred}),
         )
 
 
@@ -60,7 +61,15 @@ def combined_riders(riders, aliases):
 def alias_admin_page(riders, aliases, notice="", preferred_name=""):
     escape = html.escape
     names = sorted((item[0] for item in riders.values()), key=name_key)
-    options = ''.join(f'<option value="{escape(name)}"></option>' for name in names)
+    options = ''.join(
+        f'<label><input type="checkbox" name="alias" value="{escape(name)}"'
+        f'{" checked" if name_key(name) == name_key(preferred_name) else ""}> {escape(name)}</label>'
+        for name in names
+    )
+    keep_options = ''.join(
+        f'<option{" selected" if name_key(name) == name_key(preferred_name) else ""}>{escape(name)}</option>'
+        for name in names
+    )
     links = ''.join(
         f'<li>{escape(riders.get(alias, (alias, []))[0])} &rarr; '
         f'{escape(riders.get(preferred, (preferred, []))[0])}</li>'
@@ -72,19 +81,30 @@ def alias_admin_page(riders, aliases, notice="", preferred_name=""):
         '<title>Rider name links</title><link rel="stylesheet" href="/event-chrome.css"></head>'
         '<body class="event-directory"><header class="directory-header"><div class="directory-inner">'
         '<nav class="archive-nav"><a href="/admin/">Event admin</a><a href="/riders/">All riders</a></nav>'
-        '<h1>Combine rider names</h1><p>Choose the name to keep, then select the other name used in results.</p>'
+        '<h1>Combine rider names</h1><p>Select every name used by the same rider, then choose which one to keep.</p>'
         '</div></header><main class="directory-main"><div class="directory-inner">'
         + (f'<p role="status">{escape(notice)}</p>' if notice else '')
         + '<form class="rider-alias-form" method="post" action="/admin/rider-aliases/">'
+        '<label for="filter-names">Filter rider names</label><input id="filter-names" type="search">'
+        f'<fieldset class="merge-rider-list"><legend>Select names</legend>{options}</fieldset>'
         '<label for="preferred">Name to keep</label>'
-        f'<input id="preferred" name="preferred" list="known-riders" value="{escape(preferred_name)}">'
-        '<label for="alias">Name to combine</label><input id="alias" name="alias" list="known-riders" required>'
-        f'<datalist id="known-riders">{options}</datalist>'
+        f'<select id="preferred" name="preferred" data-keep="{escape(preferred_name)}">'
+        f'<option value="">Choose a selected name</option>{keep_options}</select>'
         '<label for="admin-token">Admin token</label><input type="password" id="admin-token" name="token" required>'
-        '<div><button name="action" value="link">Combine names</button> '
-        '<button name="action" value="remove">Unlink other name</button></div></form>'
+        '<div><button name="action" value="link">Merge selected names</button> '
+        '<button name="action" value="remove">Unlink selected names</button></div></form>'
         f'<h2>Existing links</h2>{("<ul>" + links + "</ul>") if links else "<p>No names have been linked yet.</p>"}'
-        '</div></main></body></html>'
+        '</div></main><script>'
+        'const filter=document.querySelector("#filter-names"),keep=document.querySelector("#preferred");'
+        'const choices=[...document.querySelectorAll(".merge-rider-list input")];'
+        'function update(){const previous=keep.value||keep.dataset.keep;'
+        'keep.replaceChildren(new Option("Choose a selected name",""));'
+        'for(const choice of choices)if(choice.checked)keep.add(new Option(choice.value,choice.value));'
+        'if([...keep.options].some(option=>option.value===previous))keep.value=previous;}'
+        'filter.oninput=()=>{const query=filter.value.trim().toLowerCase();for(const choice of choices)'
+        'choice.parentElement.hidden=!choice.checked&&!choice.value.toLowerCase().includes(query);};'
+        'for(const choice of choices)choice.onchange=()=>{update();filter.oninput();};update();'
+        '</script></body></html>'
     ).encode("utf-8")
 
 
