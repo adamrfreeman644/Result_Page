@@ -87,6 +87,24 @@
   padding: .35rem .65rem;
   font: inherit;
 }
+.rider-alias-form {
+  display: grid;
+  gap: .55rem;
+  max-width: 30rem;
+  padding: 1rem;
+  border: 1px solid #d6dee7;
+  border-radius: .65rem;
+  background: #fff;
+}
+.rider-alias-form label { font-weight: 700; }
+.rider-alias-form :is(input, button) {
+  min-height: 2.75rem;
+  padding: .35rem .65rem;
+  border: 1px solid #c0cbd8;
+  border-radius: .45rem;
+  font: inherit;
+}
+.rider-alias-form button { margin-top: .35rem; background: #162c43; color: #fff; cursor: pointer; }
 .archive-riders {
   display: grid;
   list-style: none;
