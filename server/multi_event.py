@@ -183,7 +183,7 @@ def event_handler(settings, data_root, export_root, config_dir):
                     "if(!selectedLevel||!levels.includes(selectedLevel))selectedLevel=levels[0];",
                     "if(!selectedLevel||!levels.includes(selectedLevel))selectedLevel=selected==='Qualifiers'?'Overall Results':levels[0];",
                 ).replace(
-                    "const set=all.filter(x=>(x.e.level||'Results')===selectedLevel);",
+                    "const set=all.filter(x=>((x.e.level||'Results'))===selectedLevel);",
                     """let set=all.filter(x=>(x.e.level||'Results')===selectedLevel);
     let qualifierNav='';
     if(categoryQualifiers&&selectedLevel==='Qualifiers'){
