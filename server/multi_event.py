@@ -13,6 +13,7 @@ from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
+from rider_archive import archive_page, collect_times
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "dist"
@@ -86,6 +87,7 @@ def directory_page(settings, sort):
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         '<title>Race Results</title><link rel="stylesheet" href="/event-chrome.css"></head>'
         '<body class="event-directory"><header class="directory-header"><div class="directory-inner">'
+        '<nav class="archive-nav"><a href="/riders/">All riders</a></nav>'
         '<h1>Race Results</h1><p>Choose an event to view its results and lap times.</p>'
         '</div></header><main class="directory-main"><div class="directory-inner">'
         '<div class="directory-toolbar"><h2>Events</h2><form class="directory-sort" method="get" action="/">'
@@ -201,7 +203,8 @@ def event_handler(settings, data_root, export_root, config_dir):
                     styles += f'<style>:root{{--event-accent:{accent};--event-header:{header}}}</style>'
                     scoped = re.sub(r'<body\b', '<body data-event-theme="archive"', scoped, count=1)
                 scoped = scoped.replace("</head>", styles + "</head>", 1)
-                back = '<a class="event-directory-link" href="/">All events</a>'
+                back = ('<a class="event-directory-link" href="/">All events</a>'
+                        '<a class="event-directory-link" href="/riders/">All riders</a>')
                 if "</footer>" in scoped:
                     scoped = scoped.replace('<footer class="footer">', '<footer class="footer event-site-footer">', 1)
                     scoped = scoped.replace("</footer>", back + "</footer>", 1)
@@ -215,6 +218,12 @@ def event_handler(settings, data_root, export_root, config_dir):
                 data = data.replace(
                     b"</p></div></section><section",
                     b"</p>${team.members?.length?`<p>${team.members.map(esc).join(', ')}</p>`:''}</div></section><section>",
+                    1,
+                )
+            if path.name == "rider.js":
+                data = data.replace(
+                    b"<h1>${esc(rider.name)}</h1>",
+                    b'<h1>${esc(rider.name)}</h1><a class="rider-archive-link" href="/riders/?name=${encodeURIComponent(rider.name)}">Times across all events</a>',
                     1,
                 )
             if archived and path.name == "live.js":
@@ -295,6 +304,7 @@ def event_handler(settings, data_root, export_root, config_dir):
             self.end_headers()
             return io.BytesIO(data)
 
+    Event.results_app = app
     return Event
 
 
@@ -315,6 +325,7 @@ def run():
         for event in settings
     )
     admin = page("Event Admin", '<p><a href="/">All events</a></p><ul>' + admin_links + '</ul>')
+    rider_events = [(event, events[event["slug"]].results_app) for event in settings]
 
     class Directory(BaseHTTPRequestHandler):
         def parse_request(self):
@@ -345,6 +356,11 @@ def run():
             content_type = "text/html"
             if path == "/":
                 document = directory_page(settings, parse_qs(target.query).get("sort", ["newest"])[0])
+            elif path == "/riders/":
+                query = parse_qs(target.query)
+                document = archive_page(
+                    collect_times(rider_events), query.get("search", [""])[0], query.get("name", [""])[0]
+                )
             elif path == "/event-chrome.css":
                 document = chrome_styles
                 content_type = "text/css"
