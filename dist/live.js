@@ -1,0 +1,200 @@
+const $=s=>document.querySelector(s),esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+let selected=null,selectedLevel=null,selectedTeam=null,lastUpdateAt=Date.now(),lastSourceStamp=null,staleTimer=null;const raceDetails=new Map();
+
+function displayPenalty(value){const raw=String(value||'').trim().replace(/^\+/,'');const parts=raw.split(':').map(Number);if(parts.length===3&&parts.every(Number.isFinite)){const seconds=parts[0]*3600+parts[1]*60+parts[2];return '+'+(Number.isInteger(seconds)?seconds:String(seconds.toFixed(3)).replace(/0+$/,'').replace(/\.$/,''));}return raw?('+'+raw):''}
+function normaliseTiedPositions(rows){
+  const groups=new Map();
+  for(const row of rows||[]){
+    const time=String(row.time||'').trim();
+    if(row.position!=null&&time&&time!=='DNF'&&/^\d{1,2}:\d{2}:\d{2}(?:\.\d+)?$/.test(time)){
+      const group=groups.get(time)||[];group.push(row);groups.set(time,group);
+    }
+  }
+  for(const group of groups.values())if(group.length>1){
+    const position=Math.min(...group.map(row=>Number(row.position)).filter(Number.isFinite));
+    group.forEach(row=>row.position=position);
+  }
+  return rows;
+}
+function renderUpdateAge(){
+  const el=$('#updated-status');if(!el)return;
+  const seconds=Math.max(0,Math.floor((Date.now()-lastUpdateAt)/1000));
+  const hours=Math.floor(seconds/3600),minutes=Math.floor(seconds%3600/60),secs=seconds%60;
+  const age=seconds>=18000000?'Long ago':hours?hours+':'+String(minutes).padStart(2,'0')+':'+String(secs).padStart(2,'0'):minutes?minutes+':'+String(secs).padStart(2,'0'):secs+' sec';
+  const at=new Date(lastUpdateAt);
+  const clock=String(at.getHours()).padStart(2,'0')+':'+String(at.getMinutes()).padStart(2,'0');
+  el.textContent='Updated '+clock+' · '+(age==='Long ago'?age:age+' ago');
+}
+function scheduleStaleLabel(){
+  clearTimeout(staleTimer);
+  const delay=Math.max(0,18000000-(Date.now()-lastUpdateAt));
+  staleTimer=setTimeout(renderUpdateAge,delay+50);
+}
+
+const tournamentRank=t=>{
+  const n=String(t).toLowerCase().replace(/\s+/g,' ').trim();
+  const order=['open','open men','women','groms','wild men','wild women','infinity race','surf & dirt','surf and durt','specials','legends','chair race','2 hour relay race'];
+  const i=order.indexOf(n);
+  return i<0?100:i;
+};
+/** Adam RaceTec sometimes labels Open as "Open Men" — show Open for 2026. */
+const displayTournament=t=>{
+  const n=String(t||'').trim();
+  if(/^open(\s+men)?$/i.test(n)) return 'Open';
+  return n||'Tournament';
+};
+const displayRaceName=value=>String(value||'').replace(/\bmen'?s?\b/gi,'Open').replace(/\bopen\s+open\b/gi,'Open');
+const levelRank=level=>['Qualifiers','Heats','Quarters','Semi','Finals'].indexOf(level);
+
+async function get(u){
+  const r=await fetch(u,{cache:'no-store'});
+  if(!r.ok)throw Error();
+  return r.json();
+}
+
+function table(e,r,{pending=false,projectedRows=null,expanded=false}={}){
+  const rows=pending&&projectedRows?projectedRows:r,mobileGlance=!expanded,compact=pending&&!expanded&&!mobileGlance,timeLabel=e.multi_lap?'Fastest lap':'Time',badge=pending?'Up next':'Results',showSeed=!/mass\\s*race/i.test([e.tournament,e.name,e.stage].filter(Boolean).join(' ')),showLapBreakdown=expanded&&/chair\\s*race/i.test([e.tournament,e.name,e.stage].filter(Boolean).join(' '));
+  const countLabel=pending?`${rows.filter(x=>x.known).length}/${rows.length||4} locked in`:`${rows.length} riders`,detailId=String(e.id||e.name);
+  if(!expanded)raceDetails.set(detailId,{e,r,options:{pending,projectedRows}});
+  const body=rows.length?rows.map(x=>{
+    const pendingRow=pending||x.pending,finish=x.finishPos??x.position,cls=[!pendingRow&&Number(finish)>0&&Number(finish)<=Number(e.highlight_count??2)?'podium':'',pendingRow?'pending-row':'',x.known?'pending-known':(pendingRow?'pending-unknown':'')].filter(Boolean).join(' ');
+    const advancement=expanded&&x.fromLabel&&x.known?`<small class="advancement">${esc(x.fromLabel)}</small>`:'';
+    const riderName=x.display_name||x.name;
+    const pathLabel=x.fromLabel||x.placeholder||riderName||(x.seed!=null&&x.seed!==''?`Seed ${x.seed}`:'Awaiting qualification');
+    const category=x.category?String(x.category):'',categoryClass=category.toLowerCase().replace(/[^a-z]+/g,'');
+    const seedTag=expanded&&showSeed&&x.seed!=null&&x.seed!==''?`<span class="seed-tag" title="Seed ${esc(x.seed)}">s${esc(x.seed)}</span>`:'';
+    // Only an unknown pending slot should display its feeder placeholder.
+    // Completed results always render the authoritative rider name.
+    const nameWithSeed=pendingRow&&!x.known?`${esc(pathLabel)}`:`${esc(riderName||pathLabel)}${seedTag}${advancement}`;
+    const riderInner=x.athlete_id?`<a class="rider rider-link" href="/rider/?id=${encodeURIComponent(x.athlete_id)}"><span class="bib bib--${categoryClass}">${esc(x.bib)}</span><span class="name">${nameWithSeed}</span>${expanded&&category?`<span class="rider-category rider-category--${categoryClass}">${esc(category)}</span>`:''}</a>`:`<span class="rider ${x.known?'':'rider-placeholder'}"><span class="name">${nameWithSeed}</span></span>`;
+    const finishLabel=pendingRow?(x.startPos??'—'):(finish==null||finish===''?'N/A':finish),timeValue=pendingRow?(x.known?'Not started':'Awaiting qualification'):x.time,penaltyLabel=!pendingRow&&x.penalty?`<small class="penalty-label">Penalty: ${esc(displayPenalty(x.penalty))}</small>`:'';
+    if(pendingRow&&compact)return `<tr class="${cls}"><td class="start">${x.startPos??'—'}</td><td class="seed">s${x.seed??'—'}</td><td>${riderInner}</td></tr>`;
+    const lapBreakdown=showLapBreakdown?`<td class="lap-breakdown">${(x.laps||[]).filter(lap=>Number(lap.lap_number)<=2).map(lap=>`<span>Lap ${esc(lap.lap_number)} <b>${esc(lap.time)}</b></span>`).join('')||'—'}</td>`:'';
+    if(mobileGlance)return `<tr class="${cls}"><td class="place">${esc(finishLabel)}</td><td>${riderInner}</td><td class="time">${esc(timeValue)}${penaltyLabel}</td></tr>`;
+    return showSeed?`<tr class="${cls}"><td class="place">${esc(finishLabel)}</td><td class="start">${x.startPos??'—'}</td><td class="seed">${x.seed!=null&&x.seed!==''?esc(x.seed):'—'}</td><td>${riderInner}</td><td class="time">${esc(timeValue)}${penaltyLabel}</td>${lapBreakdown}</tr>`:`<tr class="${cls}"><td class="place">${esc(finishLabel)}</td><td class="start">${x.startPos??'—'}</td><td>${riderInner}</td><td class="time">${esc(timeValue)}${penaltyLabel}</td>${lapBreakdown}</tr>`;
+  }).join(''):compact?'<tr class="pending-row"><td class="start">—</td><td class="seed">—</td><td><span class="rider rider-placeholder"><span class="name">Waiting for earlier results</span></span></td></tr>':mobileGlance?'<tr><td colspan="3">No results yet.</td></tr>':'<tr><td colspan="5">No results yet.</td></tr>';
+  const lapColumn=showLapBreakdown?'<col class="result-laps">':'',lapHeading=showLapBreakdown?'<th>Lap breakdown</th>':'';
+  const columns=compact?'<colgroup><col class="result-start"><col class="result-seed"><col class="result-rider"></colgroup><thead><tr><th>Start</th><th>Seed</th><th>Rider</th></tr></thead>':mobileGlance?`<colgroup><col class="result-pos"><col class="result-rider"><col class="result-time"></colgroup><thead><tr><th>Entry</th><th>Rider</th><th>${pending?'Status':esc(timeLabel)}</th></tr></thead>`:(showSeed?`<colgroup><col class="result-pos"><col class="result-start"><col class="result-seed"><col class="result-rider"><col class="result-time">${lapColumn}</colgroup><thead><tr><th>Finish position</th><th>Starting grid position</th><th>Seed</th><th>Rider</th><th>${pending?'Status':esc(timeLabel)}</th>${lapHeading}</tr></thead>`:`<colgroup><col class="result-pos"><col class="result-start"><col class="result-rider"><col class="result-time">${lapColumn}</colgroup><thead><tr><th>Finish position</th><th>Starting grid position</th><th>Rider</th><th>${pending?'Status':esc(timeLabel)}</th>${lapHeading}</tr></thead>`);
+  const headerContent=`<div><span>${esc(badge)}</span><h3>${esc(displayRaceName(e.name))}</h3></div><b>${esc(countLabel)}</b>`;
+  const cardHeader=expanded?`<header>${headerContent}</header>`:`<button type="button" class="race-card-header" data-race-detail="${esc(detailId)}" aria-label="Open ${esc(displayRaceName(e.name))} details">${headerContent}</button>`;
+  return `<article class="race-table ${pending?'race-table--pending':''}">${cardHeader}<div class="table-scroll"><table>${columns}<tbody>${body}</tbody></table></div></article>`;
+}
+function openRaceDetail(id){
+  const detail=raceDetails.get(id);if(!detail)return;
+  let overlay=document.querySelector('#race-detail-overlay');
+  if(!overlay){overlay=document.createElement('div');overlay.id='race-detail-overlay';overlay.hidden=true;document.body.appendChild(overlay);overlay.addEventListener('click',event=>{if(!event.target.closest('.race-detail'))closeRaceDetail()});}
+  overlay.innerHTML=`<div class="race-detail" role="dialog" aria-modal="true" aria-label="Race details"><button class="race-detail-close" type="button" aria-label="Close details">×</button><p class="eyebrow">Race details</p>${table(detail.e,detail.r,{...detail.options,expanded:true})}</div>`;
+  overlay.querySelector('.race-detail-close').onclick=closeRaceDetail;overlay.hidden=false;document.body.classList.add('race-detail-open');
+}
+function closeRaceDetail(){const overlay=document.querySelector('#race-detail-overlay');if(overlay)overlay.hidden=true;document.body.classList.remove('race-detail-open');}
+
+
+function renderCard(item){
+  if(item.pending) return table(item.e,item.r,{pending:true,projectedRows:item.projectedRows||[]});
+  return table(item.e,item.r);
+}
+function renderTeamRace(feed){
+ const teams=feed.teams||[];
+ $('#race-title').textContent='Team Race';$('#round-nav').hidden=true;$('#round-nav').innerHTML='';$('#result-count').textContent=`${teams.length} teams · official laps first`;
+ $('#stage-results').innerHTML=`<article class="race-table team-results-board"><header><div><span>Results</span><h3>Team standings</h3></div><b>${teams.length} teams</b></header><div class="team-board"><div class="team-board-head"><span>Pos</span><span>Team</span><span>Official laps</span><span>Elapsed</span></div>${teams.map(team=>`<div class="team-board-row ${team.position<=3?'podium':''}"><strong class="team-board-pos">${esc(team.position)}</strong><a class="team-link" href="/team/?team=${encodeURIComponent(team.team)}">${esc(team.team)}</a><div class="team-board-laps"><b>${esc(team.official_laps)}</b>${team.penalty?`<small class="penalty-label">${esc(team.penalty)}</small>`:''}</div><div class="team-board-elapsed">${esc(team.elapsed||'—')}</div></div>`).join('')||'<p class="empty">No team results yet.</p>'}</div></article><p class="stage-note">Standings use official laps, then elapsed time. Timings under one minute are excluded.</p>`;
+}
+function renderLapTimes(feed){
+ const stages=[['standard','Standard Laps'],['short','Short Track Laps']];if(!selectedLevel||!stages.some(stage=>stage[0]===selectedLevel))selectedLevel='standard';const rows=feed[selectedLevel]||[];
+ $('#race-title').textContent='Lap Times';$('#result-count').textContent=`${rows.length} recorded laps`;$('#round-nav').hidden=false;$('#round-nav').innerHTML=stages.map(([id,label])=>`<button class="round ${id===selectedLevel?'active':''}" data-level="${id}"><span class="round-name">${label}</span></button>`).join('');$('#round-nav').querySelectorAll('button').forEach(button=>button.onclick=()=>{selectedLevel=button.dataset.level;renderLapTimes(feed)});
+ $('#stage-results').innerHTML=`<article class="race-table lap-times-board"><header><div><span>${selectedLevel==='short'?'Short track':'Standard track'}</span><h3>${selectedLevel==='short'?'Short Track Laps':'Standard Laps'}</h3></div><b>${rows.length} laps</b></header><div>${rows.map(row=>`<div class="lap-time-row"><a class="rider rider-link" href="/rider/?id=${encodeURIComponent(row.athlete_id)}"><span class="bib">${esc(row.bib||'—')}</span><span class="name">${esc(row.name)}</span></a><span class="lap-time-race">${esc(row.race)}${row.lap_number?` · Lap ${esc(row.lap_number)}`:''}</span><strong class="time">${esc(row.time)}</strong></div>`).join('')||'<p class="empty">No laps recorded yet.</p>'}</div></article>`;
+}
+
+async function render(){
+  try{
+    let f={events:[],updatedAt:null};
+    try{f=await get('/api/public/events');}catch(_){/* structure preview still works offline */}
+    const received=Date.parse(f.updatedAt||'');
+    if(Number.isFinite(received)&&f.updatedAt!==lastSourceStamp){
+      lastSourceStamp=f.updatedAt;lastUpdateAt=received;renderUpdateAge();scheduleStaleLabel();
+    }else if(lastSourceStamp===null){
+      renderUpdateAge();scheduleStaleLabel();
+    }
+    const ids=(f.events||[]).map(e=>String(e.id)).filter(id=>!id.startsWith('manual:')&&!id.startsWith('preview:'));
+    const resultMap=ids.length?await get('/api/public/results?ids='+encodeURIComponent(ids.join(','))).catch(()=>({})):{};
+    const registrations=await get('/api/public/registrations').catch(()=>({riders:[]}));
+    const registeredNames=new Map((registrations.riders||[]).filter(r=>r.bib&&r.name).map(r=>[String(r.bib).trim(),r.name]));
+    const placeholderName=value=>/^(winner|\d+(?:st|nd|rd|th)?|runner\s*up)\b/i.test(String(value||'').trim());
+    // The pasted heats already contain the actual rider names. Reuse them by
+    // bib for later-round placeholders before falling back to registrations.
+    const pastedNames=new Map();
+    for(const rows of Object.values(resultMap))for(const row of rows||[]){
+      const bib=String(row.bib||'').trim();
+      if(bib&&row.name&&!placeholderName(row.name))pastedNames.set(bib,row.name);
+    }
+    const authoritativeRows=rows=>(rows||[]).map(row=>{
+      const bib=String(row.bib||'').trim();
+      const name=placeholderName(row.name)?(pastedNames.get(bib)||registeredNames.get(bib)||row.name):row.name;
+      return name===row.name?row:{...row,name};
+    });
+    const allItems=(f.events||[]).map(e=>({e,r:normaliseTiedPositions(authoritativeRows(resultMap[String(e.id)]||[]))}));
+    if(window.BracketProjection?.refreshSeeds){
+      await BracketProjection.refreshSeeds({eventItems:allItems});
+    }
+
+    const rawTs=[...new Set((f.events||[]).map(e=>e.tournament||'Tournament'))];
+    const liveTabs=[...new Set(rawTs.map(displayTournament))];if(!liveTabs.includes('Lap Times'))liveTabs.push('Lap Times');
+    const ts=(liveTabs.length?liveTabs:['Open','Women','Groms']).sort((a,b)=>tournamentRank(a)-tournamentRank(b)||a.localeCompare(b));
+    if(!selected||!ts.includes(selected))selected=ts[0];
+    $('#event-tabs').innerHTML=ts.map(t=>`<button class="tab ${t===selected?'active':''}" data-t="${esc(t)}">${esc(t)}</button>`).join('');
+    $('#event-tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{selected=b.dataset.t;selectedLevel=null;render()});
+
+    const raw=allItems.filter(item=>displayTournament(item.e.tournament||'Tournament')===selected);
+    if(/^lap times$/i.test(selected)){renderLapTimes(await get('/api/public/lap-times'));return;}
+    if(/^team race$/i.test(selected)){
+      const source=raw[0];if(!source){$('#race-title').textContent='Team Race';$('#result-count').textContent='Waiting for a Team Race paste.';$('#round-nav').hidden=true;$('#stage-results').innerHTML='';return}
+      renderTeamRace(await get('/api/public/team-race?event='+encodeURIComponent(source.e.id)));return;
+    }
+    const knockout=raw.filter(item=>!(window.BracketProjection?.isSeedingEvent?.(item.e)));
+    let enriched;
+    let structureOnly=false;
+    if(knockout.length&&window.BracketProjection){
+      enriched=BracketProjection.enrichTournament(knockout);
+    }else if(window.BracketProjection?.previewTournament){
+      enriched=BracketProjection.previewTournament(selected);
+      structureOnly=true;
+    }else{
+      enriched={bracket:knockout.map(x=>({...x,pending:false})),extras:[]};
+    }
+
+    const seedingExtras=raw.filter(item=>window.BracketProjection?.isSeedingEvent?.(item.e)).map(item=>{
+      const category=window.BracketProjection?.getSeedCatalog?.()?.categories||{};
+      const label=[item.e.tournament,item.e.name,item.e.stage,item.e.level].filter(Boolean).join(' ').toLowerCase();
+      const seedRows=label.includes('wild')&&label.includes('grom')?category['Wild Groms']||[]:label.includes('wild')&&label.includes('women')?category['Wild Women']||[]:label.includes('wild')?category['Wild Open']||[]:label.includes('grom')?category.Groms||[]:label.includes('women')?category.Women||[]:category.Open||[];
+      const seedByRider=new Map(seedRows.map(row=>[String(row.athlete_id||''),row.seed]));
+      return {
+        ...item,
+        pending:false,
+        r:(item.r||[]).map(r=>({...r,finishPos:Number(r.position)||null,startPos:null,seed:seedByRider.get(String(r.athlete_id||''))??null})),
+      };
+    });
+    const all=[...enriched.bracket,...enriched.extras,...seedingExtras];
+    if(!all.length){$('#race-title').textContent='No published results';$('#result-count').textContent='';$('#round-nav').innerHTML='';$('#stage-results').innerHTML='';return}
+    const levels=[...new Set(all.map(item=>BracketProjection?BracketProjection.stageOfItem(item):'Qualifiers'))].sort((a,b)=>levelRank(a)-levelRank(b));
+    if(!selectedLevel||!levels.includes(selectedLevel))selectedLevel=levels[0];
+    const pendingCount=all.filter(x=>x.pending).length;
+    $('#race-title').textContent=selected;
+    $('#result-count').textContent=structureOnly
+      ?`Bracket structure · who faces who (no race data yet)`
+      :`${raw.length} published${pendingCount?` · ${pendingCount} up next`:''}`;
+    const roundNav=$('#round-nav');
+    roundNav.hidden=levels.length<2;
+    roundNav.innerHTML=levels.length>1?levels.map((level,i)=>`<button class="round ${level===selectedLevel?'active':''}" data-level="${esc(level)}"><span class="round-name">${esc(level)}</span><span class="round-step">${i+1}</span></button>`).join(''):'';
+    roundNav.querySelectorAll('button').forEach(b=>b.onclick=()=>{selectedLevel=b.dataset.level;render()});
+    const set=all.filter(x=>(BracketProjection?BracketProjection.stageOfItem(x):'Qualifiers')===selectedLevel);
+    $('#stage-results').innerHTML=`<div class="race-grid ${set.length===1?'single':''}">${set.map(renderCard).join('')}</div><p class="stage-note">${structureOnly?'Click a heat to expand. Heats show Seed N; later rounds show Winner of H… / 2nd place of …. ':'Rows are start order. Heats: better seed → earlier gate. Later rounds: winners take starts 1–2 (by seed), 2nds take 3–4. '}</p>`;
+    $('#stage-results').querySelectorAll('.race-card-header[data-race-detail]').forEach(header=>{
+      header.addEventListener('click',()=>openRaceDetail(header.dataset.raceDetail));
+    });
+  }catch(err){
+    $('#race-title').textContent='Waiting for timing feed';
+    $('#result-count').textContent='The live results service is not connected yet.';
+  }
+}
+render();
+setInterval(render,15000);
+setInterval(renderUpdateAge,1000);

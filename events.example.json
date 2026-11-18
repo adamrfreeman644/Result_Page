@@ -1,0 +1,4 @@
+[
+  {"slug": "owar-2026", "name": "OWAR 2026", "export": "owar-2026/results.rdf", "owar": true},
+  {"slug": "another-event", "name": "Another Event", "export": "another-event/results.rdf"}
+]

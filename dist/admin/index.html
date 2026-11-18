@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Results Admin · OWAR 2026</title>
+  <link rel="stylesheet" href="/styles.css?v=chip-display-link-1">
+</head>
+<body>
+<main class="admin-shell">
+  <div class="admin-top">
+    <div>
+      <div class="eyebrow">Race control · <span id="app-version">Loading…</span></div>
+      <h1>Publish results</h1>
+    </div>
+    <div class="admin-top-links">
+      <a class="back chip-display-link" href="/registrationdisplay" target="_blank" rel="noopener">Chip return TV ↗</a>
+      <a class="back" href="/">View public page ↗</a>
+    </div>
+  </div>
+
+  <div class="grid">
+    <section class="panel">
+      <h2>Event tree</h2>
+      <div id="event-list"></div>
+    </section>
+    <aside class="panel">
+      <h2>Private RDF feed</h2>
+      <div class="settings">
+        <div class="field">
+          <label for="source-mode">Results source</label>
+          <select id="source-mode">
+            <option value="rdf">RDF file</option>
+            <option value="paste">Paste RaceTec table</option>
+          </select>
+        </div>
+        <div class="field" id="paste-source" hidden>
+          <label for="pasted-results">Paste RaceTec results</label>
+          <textarea id="pasted-results" rows="10" placeholder="Paste the full tab-separated RaceTec table, including its headings."></textarea>
+          <label class="paste-replace"><input id="replace-pasted" type="checkbox"> Replace listed event data (remove riders missing from this paste)</label>
+          <button class="btn yellow" id="import-pasted">Import pasted results</button>
+          <small id="paste-status"></small>
+        </div>
+        <div class="field">
+          <label>RDF source configuration</label>
+          <input id="export-dir" readonly>
+          <input id="export-filename" readonly>
+        </div>
+        <p id="file-status">Loading source status…</p>
+        <div class="feed-health" id="feed-health" aria-live="polite">Checking RDF reader…</div>
+        <p id="import-status"></p>
+        <div class="field">
+          <label for="event-status">Public result status</label>
+          <select id="event-status">
+            <option>Live</option>
+            <option>Provisional</option>
+            <option>Official</option>
+            <option>Finished</option>
+          </select>
+        </div>
+        <button class="btn yellow" id="feed-toggle"></button>
+        <button class="btn" id="force-show-all"></button>
+        <button class="btn" id="force-read">Force read RDF</button>
+        <button class="btn" id="save-setup">Save changes</button>
+        <button class="btn" id="chip-return-toggle">Chip return view: Off</button>
+      </div>
+    </aside>
+  </div>
+
+  <section class="panel seed-outs-panel">
+    <h2>Out of race · seed bump-up</h2>
+    <div class="seed-outs">
+      <p class="seed-outs-help">Toggle riders out of the seed list. Everyone below bumps up; seed 32 opens for a manual fill later. DNF / missing riders from seeding races appear at the bottom.</p>
+      <div class="seed-outs-form">
+        <div class="field">
+          <label for="out-category">Category</label>
+          <select id="out-category">
+            <option>Open</option>
+            <option>Women</option>
+            <option>Groms</option>
+            <option>Wild Open</option>
+            <option>Wild Women</option>
+            <option>Wild Groms</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="out-query">Jump to chip / name</label>
+          <input id="out-query" type="text" inputmode="search" placeholder="e.g. 189 or Dan Turner" autocomplete="off" spellcheck="false">
+        </div>
+        <button class="btn" id="out-find" type="button">Find in list</button>
+        <button class="btn" id="out-clear" type="button">Clear all outs</button>
+      </div>
+      <p id="out-status" class="seed-outs-status" role="status"></p>
+      <div class="seed-outs-cols seed-outs-cols--single">
+        <div>
+          <h3>Seed list <span id="out-seed-count"></span></h3>
+          <div id="out-preview" class="seed-outs-preview"></div>
+        </div>
+      </div>
+      <div class="seed-fills-box">
+        <h3>Empty slots · manual fills <span id="out-empty-count"></span></h3>
+        <p class="muted seed-outs-legend">Write names for open slots. All names are saved permanently — if empty slots shrink later, extras stay stored but only the first N are used.</p>
+        <div id="out-fills" class="seed-fills-editor"></div>
+        <div class="seed-fills-actions">
+          <button class="btn" id="out-fill-add" type="button">+ Add name</button>
+          <button class="btn yellow" id="out-fill-save" type="button">Save fills</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+<script src="/bracket.js?v=20261002.46"></script>
+<script src="/admin/admin.js?v=20261003.48"></script>
+</body>
+</html>

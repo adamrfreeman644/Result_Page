@@ -1,0 +1,19 @@
+name: multi-event-results
+services:
+  results:
+    build: .
+    ports:
+      - "${RESULTS_PORT:-6544}:6544"
+    env_file: .env
+    environment:
+      PORT: 6544
+      EVENTS_CONFIG: /config/events.json
+      RACE_EXPORT_DIR: /race-export
+      RESULTS_DATA_DIR: /data
+    volumes:
+      - event-data:/data
+      - ./events.json:/config/events.json:ro
+      - ${RACE_EXPORT_DIR:?Set RACE_EXPORT_DIR in .env}:/race-export:ro
+    restart: unless-stopped
+volumes:
+  event-data:
