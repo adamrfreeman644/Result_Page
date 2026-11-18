@@ -406,10 +406,10 @@ def run():
                 return
             riders = collect_times(rider_events)
             action = fields.get("action", [""])[0]
-            alias = fields.get("alias", [""])[0]
+            aliases = fields.get("alias", [])
             preferred = fields.get("preferred", [""])[0]
             try:
-                change_alias(alias_path, riders, action, alias, preferred)
+                change_alias(alias_path, riders, action, aliases, preferred)
             except ValueError as error:
                 self.send_document(alias_admin_page(riders, load_aliases(alias_path), str(error)), status=400)
                 return
