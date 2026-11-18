@@ -9,9 +9,10 @@ import re
 import sqlite3
 import threading
 from contextlib import closing
+from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "dist"
@@ -36,14 +37,71 @@ def page(title, content):
     ).encode("utf-8")
 
 
+def event_colours(settings):
+    palette = settings.get("palette", {})
+    if any(key not in {"accent", "header"} or not isinstance(value, str)
+           or not re.fullmatch(r"#[0-9a-fA-F]{6}", value) for key, value in palette.items()):
+        raise ValueError(f"Invalid colour palette for {settings['slug']}")
+    return palette.get("accent", "#f5cc24"), palette.get("header", "#162c43")
+
+
+def event_date(settings):
+    value = settings.get("date")
+    if isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            pass
+    return None
+
+
+def directory_page(settings, sort):
+    options = {"newest": "Newest first", "oldest": "Oldest first", "name": "Name (A to Z)"}
+    if sort not in options:
+        sort = "newest"
+    events = sorted(settings, key=lambda event: event["name"].casefold())
+    if sort != "name":
+        events.sort(key=lambda event: (
+            event_date(event) is None,
+            (event_date(event) or date.min).toordinal() * (-1 if sort == "newest" else 1),
+        ))
+    cards = []
+    for event in events:
+        name = html.escape(event["name"])
+        accent, _ = event_colours(event)
+        when = event_date(event)
+        date_label = (
+            f'<time datetime="{when.isoformat()}">{when.day} {when:%b %Y}</time>' if when else ""
+        )
+        cards.append(
+            f'<li><a class="directory-card" style="--event-accent:{accent}" href="/events/{event["slug"]}/">'
+            f'<strong>{name}</strong>{date_label}<span>View results</span></a></li>'
+        )
+    sort_options = ''.join(
+        f'<option value="{key}"{" selected" if sort == key else ""}>{label}</option>'
+        for key, label in options.items()
+    )
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<title>Race Results</title><link rel="stylesheet" href="/event-chrome.css"></head>'
+        '<body class="event-directory"><header class="directory-header"><div class="directory-inner">'
+        '<h1>Race Results</h1><p>Choose an event to view its results and lap times.</p>'
+        '</div></header><main class="directory-main"><div class="directory-inner">'
+        '<div class="directory-toolbar"><h2>Events</h2><form class="directory-sort" method="get" action="/">'
+        '<label for="sort">Sort by</label>'
+        f'<select id="sort" name="sort">{sort_options}</select><button type="submit">Apply</button></form></div>'
+        f'<ul class="directory-grid">{"".join(cards)}</ul>'
+        '</div></main></body></html>'
+    ).encode("utf-8")
+
+
 def scoped_asset(source, prefix, title, generic):
     if generic:
         source = re.sub(
             r'<header class="brandbar">.*?</header>',
             lambda _: '<header class="brandbar"><div class="brandbar__inner">'
-            '<a class="brand" href="/">All events</a>'
-            f'<div class="event-title"><strong>{title}</strong></div>'
-            '<span></span></div></header>',
+            f'<div class="event-title"><strong>{title}</strong></div></div></header>',
             source,
             flags=re.S,
         )
@@ -51,12 +109,7 @@ def scoped_asset(source, prefix, title, generic):
         source = re.sub(r'<script src="/(?:translate|bracket)\.js(?:\?[^"]*)?"></script>', '', source)
         source = source.replace("European Onewheel League Finals", "Official race results")
     source = INTERNAL_URL.sub(lambda match: match[1] + prefix + "/", source)
-    source = source.replace('class="brand" href="' + prefix + '/">All events',
-                            'class="brand" href="/">All events')
     source = source.replace("OWAR 2026", title)
-    if not generic and '<main' in source:
-        source = source.replace('</header>', '</header><nav class="shell" aria-label="Event directory">'
-                                '<a href="/">All events</a></nav>', 1)
     return source
 
 
@@ -67,10 +120,7 @@ def event_handler(settings, data_root, export_root, config_dir):
     generic = not settings.get("owar", False)
     archived = settings.get("archive", False)
     category_qualifiers = settings.get("qualifiers_in_categories", False)
-    palette = settings.get("palette", {})
-    if any(key not in {"accent", "header"} or not re.fullmatch(r"#[0-9a-fA-F]{6}", value)
-           for key, value in palette.items()):
-        raise ValueError(f"Invalid colour palette for {slug}")
+    accent, header = event_colours(settings)
     source = (export_root / settings.get("export", f"{slug}/results.rdf")).resolve()
     if export_root not in source.parents or source.suffix.lower() != ".rdf":
         raise ValueError(f"Invalid RDF export path for {slug}")
@@ -144,7 +194,20 @@ def event_handler(settings, data_root, export_root, config_dir):
                     return None
                 return super().send_head()
             source = path.read_text(encoding="utf-8")
-            data = scoped_asset(source, prefix, title, generic).encode("utf-8")
+            scoped = scoped_asset(source, prefix, title, generic)
+            if path.suffix == ".html":
+                styles = '<link rel="stylesheet" href="/event-chrome.css">'
+                if generic:
+                    styles += f'<style>:root{{--event-accent:{accent};--event-header:{header}}}</style>'
+                    scoped = re.sub(r'<body\b', '<body data-event-theme="archive"', scoped, count=1)
+                scoped = scoped.replace("</head>", styles + "</head>", 1)
+                back = '<a class="event-directory-link" href="/">All events</a>'
+                if "</footer>" in scoped:
+                    scoped = scoped.replace('<footer class="footer">', '<footer class="footer event-site-footer">', 1)
+                    scoped = scoped.replace("</footer>", back + "</footer>", 1)
+                else:
+                    scoped = scoped.replace("</body>", f'<footer class="event-site-footer">{back}</footer></body>', 1)
+            data = scoped.encode("utf-8")
             if archived and path.name == "index.html" and route in {"/", "/index.html"}:
                 data = data.replace(b"<h1>Live results</h1>", b"<h1>Results</h1>")
                 data = data.replace(b"Automatic results feed", b"Event archive")
@@ -226,12 +289,6 @@ def event_handler(settings, data_root, export_root, config_dir):
                 script = f"const categoryQualifiers={'true' if category_qualifiers else 'false'};\nlet selectedQualifierView='Overall Results';\n" + script
                 script = script.replace("function renderUpdateAge(){", "function renderUpdateAge(){ const archiveLabel=$('#updated-status');if(archiveLabel){archiveLabel.textContent='Archived results';return;}")
                 data = script.encode("utf-8")
-            if palette and path.name == "styles.css":
-                accent = palette.get("accent", "#f5cc24")
-                header = palette.get("header", "#101010")
-                data += (f":root{{--yellow:{accent};--yellow2:{accent};--paper:#f6f8ef}}"
-                         f".brandbar,.race-table>header,.rider-hero{{background:{header}}}"
-                         "body{background:var(--paper)}").encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", self.guess_type(str(path)) + "; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
@@ -247,15 +304,12 @@ def run():
     data_root = Path(os.getenv("RESULTS_DATA_DIR", "/data")).resolve()
     export_root = Path(os.getenv("RACE_EXPORT_DIR", "/race-export")).resolve()
     events = {}
-    links = []
+    chrome_styles = (STATIC / "event-chrome.css").read_bytes()
     for event in settings:
         slug = event["slug"]
         if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug) or slug in events:
             raise ValueError(f"Invalid or duplicate event slug: {slug}")
         events[slug] = event_handler(event, data_root, export_root, config_path.parent)
-        links.append(f'<li><a href="/events/{slug}/">{html.escape(event["name"])}</a></li>')
-    home = page("Race Results", '<ul>' + ''.join(links) + '</ul>' if links
-                else '<p>No events have been configured yet.</p>')
     admin_links = ''.join(
         f'<li><a href="/events/{event["slug"]}/admin/">{html.escape(event["name"])}</a></li>'
         for event in settings
@@ -280,19 +334,27 @@ def run():
             return True
 
         def do_GET(self):
-            path = urlsplit(self.path).path
+            target = urlsplit(self.path)
+            path = target.path
             match = EVENT_PATH.fullmatch(path)
             if path == "/admin" or (match and match[1] in events and not match[2]):
                 self.send_response(308)
                 self.send_header("Location", path + "/")
                 self.end_headers()
                 return
-            document = {"/": home, "/admin/": admin}.get(path)
+            content_type = "text/html"
+            if path == "/":
+                document = directory_page(settings, parse_qs(target.query).get("sort", ["newest"])[0])
+            elif path == "/event-chrome.css":
+                document = chrome_styles
+                content_type = "text/css"
+            else:
+                document = admin if path == "/admin/" else None
             if document is None:
                 self.send_error(404)
                 return
             self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Type", content_type + "; charset=utf-8")
             self.send_header("Content-Length", str(len(document)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
