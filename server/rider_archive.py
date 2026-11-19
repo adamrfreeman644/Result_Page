@@ -5,6 +5,7 @@ import sqlite3
 import unicodedata
 from collections import defaultdict
 from contextlib import closing
+from difflib import SequenceMatcher
 from urllib.parse import urlencode
 
 
@@ -155,6 +156,37 @@ def collect_times(events):
     return riders
 
 
+def rider_search(riders, aliases, search):
+    query = name_key(search)
+    if len(query) < 2:
+        return []
+    names = defaultdict(list)
+    for alias, preferred in aliases.items():
+        names[preferred].append(alias)
+
+    def score(candidate):
+        if candidate == query:
+            return 1.0
+        if candidate.startswith(query):
+            return 0.97
+        if query in candidate:
+            return 0.93
+        if len(query) < 4:
+            return 0.0
+        words = candidate.split()
+        return max(
+            SequenceMatcher(None, query, value, autojunk=False).ratio()
+            for value in (candidate, *words)
+        )
+
+    ranked = []
+    for key, (display, _) in riders.items():
+        rank = max(score(candidate) for candidate in (key, *names[key]))
+        if rank >= 0.76:
+            ranked.append((-rank, key, display))
+    return [display for _, _, display in sorted(ranked)]
+
+
 def archive_page(riders, search, name, aliases=None):
     aliases = aliases or {}
     original_names = riders
@@ -186,22 +218,25 @@ def archive_page(riders, search, name, aliases=None):
     else:
         title = "All riders"
         subtitle = "Find laps and race times across published events."
-        matches = sorted(
-            (display for key, (display, _) in riders.items() if name_key(search) in key or any(
-                preferred == key and name_key(search) in alias for alias, preferred in aliases.items()
-            )),
-            key=name_key,
-        )
+        matches = rider_search(riders, aliases, search)
         links = ''.join(
             f'<li><a href="{escape(rider_href(display))}">{escape(display)}</a></li>'
-            for display in matches
+            for display in matches[:20]
         )
+        if len(name_key(search)) < 2:
+            results = '<p>Enter at least two characters to find a rider.</p>'
+        elif not links:
+            results = '<p>No matching riders.</p>'
+        else:
+            results = f'<ul class="archive-riders">{links}</ul>'
+            if len(matches) > 20:
+                results += '<p>Showing the best 20 matches. Narrow your search to see more.</p>'
         content = (
             '<form class="directory-sort archive-search" method="get" action="/riders/">'
             '<label for="rider-search">Rider name</label>'
             f'<input id="rider-search" name="search" type="search" value="{escape(search)}">'
             '<button type="submit">Search</button></form>'
-            + (f'<ul class="archive-riders">{links}</ul>' if links else '<p>No matching riders.</p>')
+            + results
         )
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
